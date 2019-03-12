@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 
 class DataLoad(object):
-    def __init__(self,train_data_file,test_data_file,delimiter,number_of_features,batch_size,debug):
+    def __init__(self,train_data_file,test_data_file,delimiter,number_of_features,debug):
         """ Loading training data """
         self.training_set = pd.read_csv(train_data_file,delimiter = delimiter)
         self.training_set = np.array(self.training_set,dtype='int')
@@ -15,7 +15,7 @@ class DataLoad(object):
         self.number_of_movies = int(max(max(self.training_set[:,1]),max(self.test_set[:,1])))
         """ Setting number of hidden nodes """
         self.number_of_hidden_nodes = number_of_features
-        self.batch_size = batch_size
+        
         
         if(debug):
             print("---------------Input Data begin----------------------\n")
@@ -48,11 +48,12 @@ class DataLoad(object):
 
 class RestrictedBoltzmannMachine(DataLoad):
     def __init__(self,train_data_file,test_data_file,delimiter,number_of_features,batch_size,no_epochs,debug=False):
-        DataLoad.__init__(self,train_data_file,test_data_file,delimiter,number_of_features,batch_size,debug)
+        DataLoad.__init__(self,train_data_file,test_data_file,delimiter,number_of_features,debug)
         self.weights = torch.randn(self.number_of_hidden_nodes,self.number_of_movies)
         self.hidden_bias = torch.randn(1,self.number_of_hidden_nodes)
         self.visible_bias = torch.randn(1,self.number_of_movies)
         self.no_epochs = no_epochs
+        self.batch_size = batch_size
         
         if(debug):
             print("---------------Input Weights and bias begin----------------------\n")
@@ -94,6 +95,7 @@ class RestrictedBoltzmannMachine(DataLoad):
                 train_loss += torch.mean(torch.abs(visible_initial[visible_initial>=0] - visible_sampled[visible_initial>=0]))
                 s+=1
             print('Epoch : {0} and loss : {1} \n '.format(str(epoch),str(train_loss/s)))
+            self.train_loss = train_loss/s
             
     def testRBM(self):
         test_loss = 0
@@ -104,13 +106,14 @@ class RestrictedBoltzmannMachine(DataLoad):
             if len(visible_testing[visible_testing >= 0]) > 0:
                 _,hidden_sampled = self.sample_hidden_for_given_visible(visible_testing)
                 _,visible_sampled = self.sample_visible_for_given_hidden(hidden_sampled)
-            test_loss += torch.mean((visible_training[visible_training >=0] - visible_testing[visible_training >=0]))
+            test_loss += torch.mean(torch.abs(visible_testing[visible_testing >=0] - visible_training[visible_testing >=0]))
             s+=1
-            print('Test loss : {0} \n '.format(str(test_loss/s)))
+        print('Test loss : {0} \n '.format(str(test_loss/s)))
+        self.test_loss = test_loss/s
 
 def main():
     global rbm
-    rbm = RestrictedBoltzmannMachine('ml-100k/u1.base','ml-100k/u1.test','\t',200,100,10,True)
+    rbm = RestrictedBoltzmannMachine('ml-100k/u1.base','ml-100k/u1.test','\t',200,100,10)
     rbm.trainRBM()
     rbm.testRBM()
     
