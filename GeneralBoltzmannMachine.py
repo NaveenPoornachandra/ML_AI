@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as f
 
 class DataLoad(object):
     def __init__(self,train_data_file,test_data_file,delimiter,number_of_features,debug):
@@ -94,14 +93,14 @@ class GeneralBoltzmannMachine(DataLoad):
             
         """
         wx1 = torch.mm(input_visible,self.visible_hidden_weights.t())
-        wx = f.normalize(torch.mm(wx1,self.hidden_hidden_weights))
+        wx = (torch.mm(wx1,self.hidden_hidden_weights))
         activation = wx + self.hidden_bias.expand_as(wx)
         prob_hidden_for_given_visible = torch.sigmoid(activation)
         return prob_hidden_for_given_visible,torch.bernoulli(prob_hidden_for_given_visible)
     
     def sample_visible_for_given_hidden(self,input_hidden):
         wy1 = torch.mm(input_hidden,self.visible_hidden_weights)
-        wy = f.normalize(torch.mm(wy1,self.visible_visible_weights.t()))
+        wy = (torch.mm(wy1,self.visible_visible_weights.t()))
         activation = wy + self.visible_bias.expand_as(wy)
         prob_visible_for_given_hidden = torch.sigmoid(activation)
         return prob_visible_for_given_hidden,torch.bernoulli(prob_visible_for_given_hidden)
@@ -112,11 +111,11 @@ class GeneralBoltzmannMachine(DataLoad):
             ∆hidden_bias = learnin_rate * (EPdata [hh⊤] − EPmodel [hh⊤])
             ∆visible_bias = learnin_rate * (EPdata [vv⊤] − EPmodel [vv⊤])
         """
-        self.visible_hidden_weights -= self.learning_rate * f.normalize((torch.mm(hidden_sampled.t(),visible_sampled) - torch.mm(hidden_initial.t(),visible_initial)))
+        self.visible_hidden_weights -= self.learning_rate * ((torch.mm(hidden_sampled.t(),visible_sampled) - torch.mm(hidden_initial.t(),visible_initial)))
         self.hidden_hidden_weights -= self.weight_eye_matrix(self.learning_rate * (torch.mm(hidden_sampled.t(),hidden_sampled) - torch.mm(hidden_initial.t(),hidden_initial)),0)
         self.visible_visible_weights -= self.weight_eye_matrix(self.learning_rate * (torch.mm(visible_sampled.t(),visible_sampled) - torch.mm(visible_initial.t(),visible_initial)),0)
-        self.hidden_bias -= self.learning_rate * (torch.sum(f.normalize((hidden_sampled - hidden_initial)),0))
-        self.visible_bias -= self.learning_rate * (torch.sum(f.normalize((visible_sampled - visible_initial)),0))
+        self.hidden_bias -= self.learning_rate * (torch.sum(((hidden_sampled - hidden_initial)),0))
+        self.visible_bias -= self.learning_rate * (torch.sum(((visible_sampled - visible_initial)),0))
         
     def trainGBM(self):
         
