@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as f
 
 class DataLoad(object):
     def __init__(self,train_data_file,test_data_file,delimiter,number_of_features,debug):
@@ -35,6 +36,15 @@ class DataLoad(object):
         self.training_set = torch.FloatTensor(self.training_set)
         self.test_set = torch.FloatTensor(self.test_set)
         
+        self.training_set[self.training_set==0] = -1
+        self.training_set[self.training_set==1] = 0
+        self.training_set[self.training_set==2] = 0
+        self.training_set[self.training_set>2] = 1
+        self.test_set[self.test_set==0] = -1
+        self.test_set[self.test_set==1] = 0
+        self.test_set[self.test_set==2] = 0
+        self.test_set[self.test_set>2] = 1
+        
     def convert(self,data):
         converted_data = []
         for id_users in range(1,self.number_of_users+1):
@@ -44,19 +54,29 @@ class DataLoad(object):
             ratings[id_movies - 1] = id_ratings
             converted_data.append(list(ratings))
         return converted_data
+    
+    def weight_eye_matrix(self,input_matrix,eye_value):
+        rows = input_matrix.shape[0]
+        cols = input_matrix.shape[1]
+        eye_matrix = torch.eye(rows,cols)
+        return input_matrix.masked_fill_(eye_matrix.byte(),eye_value)
         
 
 class GeneralBoltzmannMachine(DataLoad):
     def __init__(self,train_data_file,test_data_file,delimiter,number_of_features,batch_size,no_epochs,learning_rate=1.0,debug=False):
         DataLoad.__init__(self,train_data_file,test_data_file,delimiter,number_of_features,debug)
-        self.visible_hidden_weights = torch.randn(self.number_of_hidden_nodes,self.number_of_movies)
-        self.hidden_hidden_weights = torch.randn(self.number_of_hidden_nodes,self.number_of_hidden_nodes)
-        self.visible_visible_weights = torch.randn(self.number_of_movies,self.number_of_movies)
+        self.visible_hidden_weights = torch.rand(self.number_of_hidden_nodes,self.number_of_movies)
+        self.hidden_hidden_weights = torch.rand(self.number_of_hidden_nodes,self.number_of_hidden_nodes)
+        self.hidden_hidden_weights = self.weight_eye_matrix(self.hidden_hidden_weights,1)
+        
+        self.visible_visible_weights = torch.rand(self.number_of_movies,self.number_of_movies)
+        self.visible_visible_weights =  self.weight_eye_matrix(self.visible_visible_weights,1)
+        
         self.init_visible_hidden_weights = self.visible_hidden_weights
         self.init_hidden_hidden_weights = self.hidden_hidden_weights
         self.init_visible_visible_weights = self.visible_visible_weights
-        self.hidden_bias = torch.randn(1,self.number_of_hidden_nodes)
-        self.visible_bias = torch.randn(1,self.number_of_movies)
+        self.hidden_bias = torch.rand(1,self.number_of_hidden_nodes)
+        self.visible_bias = torch.rand(1,self.number_of_movies)
         self.no_epochs = no_epochs
         self.batch_size = batch_size
         self.learning_rate = torch.tensor(learning_rate)
@@ -74,16 +94,14 @@ class GeneralBoltzmannMachine(DataLoad):
             
         """
         wx1 = torch.mm(input_visible,self.visible_hidden_weights.t())
-        wx2 = torch.sum(self.hidden_hidden_weights,dim=1)
-        wx = wx1 + wx2.expand_as(wx1)
+        wx = f.normalize(torch.mm(wx1,self.hidden_hidden_weights))
         activation = wx + self.hidden_bias.expand_as(wx)
         prob_hidden_for_given_visible = torch.sigmoid(activation)
         return prob_hidden_for_given_visible,torch.bernoulli(prob_hidden_for_given_visible)
     
     def sample_visible_for_given_hidden(self,input_hidden):
         wy1 = torch.mm(input_hidden,self.visible_hidden_weights)
-        wy2 = torch.sum(self.visible_visible_weights,dim=1)
-        wy = wy1 + wy2.expand_as(wy1)
+        wy = f.normalize(torch.mm(wy1,self.visible_visible_weights.t()))
         activation = wy + self.visible_bias.expand_as(wy)
         prob_visible_for_given_hidden = torch.sigmoid(activation)
         return prob_visible_for_given_hidden,torch.bernoulli(prob_visible_for_given_hidden)
@@ -94,11 +112,11 @@ class GeneralBoltzmannMachine(DataLoad):
             ∆hidden_bias = learnin_rate * (EPdata [hh⊤] − EPmodel [hh⊤])
             ∆visible_bias = learnin_rate * (EPdata [vv⊤] − EPmodel [vv⊤])
         """
-        self.visible_hidden_weights += self.learning_rate * (torch.mm(hidden_initial.t(),visible_initial) - torch.mm(hidden_sampled.t(),visible_sampled))
-        self.hidden_hidden_weights += self.learning_rate * (torch.mm(hidden_initial.t(),hidden_initial) - torch.mm(hidden_sampled.t(),hidden_sampled))
-        self.visible_visible_weights += self.learning_rate * (torch.mm(visible_initial.t(),visible_initial) - torch.mm(visible_sampled.t(),visible_sampled))
-        self.hidden_bias += self.learning_rate * (torch.sum((hidden_initial-hidden_sampled),0))
-        self.visible_bias += self.learning_rate * (torch.sum((visible_initial-visible_sampled),0))
+        self.visible_hidden_weights -= self.learning_rate * f.normalize((torch.mm(hidden_sampled.t(),visible_sampled) - torch.mm(hidden_initial.t(),visible_initial)))
+        self.hidden_hidden_weights -= self.weight_eye_matrix(self.learning_rate * (torch.mm(hidden_sampled.t(),hidden_sampled) - torch.mm(hidden_initial.t(),hidden_initial)),0)
+        self.visible_visible_weights -= self.weight_eye_matrix(self.learning_rate * (torch.mm(visible_sampled.t(),visible_sampled) - torch.mm(visible_initial.t(),visible_initial)),0)
+        self.hidden_bias -= self.learning_rate * (torch.sum(f.normalize((hidden_sampled - hidden_initial)),0))
+        self.visible_bias -= self.learning_rate * (torch.sum(f.normalize((visible_sampled - visible_initial)),0))
         
     def trainGBM(self):
         
@@ -115,7 +133,7 @@ class GeneralBoltzmannMachine(DataLoad):
                     visible_sampled[visible_initial < 0] = visible_initial[visible_initial < 0]
                 prob_hidden_smpled,_ = self.sample_hidden_for_given_visible(visible_sampled)
                 self.train(visible_initial,visible_sampled,prob_hidden_initial,prob_hidden_smpled)
-                train_loss += torch.mean(torch.abs(visible_initial[visible_initial>=0] - visible_sampled[visible_initial>=0]))
+                train_loss += torch.mean(torch.abs(visible_sampled[visible_initial>=0] - visible_initial[visible_initial>=0]))
                 s+=1
             print('Epoch : {0} and loss : {1} \n '.format(str(epoch),str(train_loss/s)))
             self.train_loss = train_loss/s
@@ -129,8 +147,8 @@ class GeneralBoltzmannMachine(DataLoad):
             if len(visible_testing[visible_testing >= 0]) > 0:
                 _,hidden_sampled = self.sample_hidden_for_given_visible(visible_testing)
                 _,visible_sampled = self.sample_visible_for_given_hidden(hidden_sampled)
-            test_loss += torch.mean(torch.abs(visible_testing[visible_testing >=0] - visible_training[visible_testing >=0]))
-            s+=1
+                test_loss += torch.mean(torch.abs(visible_testing[visible_testing >=0] - visible_training[visible_testing >=0]))
+                s+=1
         print('Test loss : {0} \n '.format(str(test_loss/s)))
         self.test_loss = test_loss/s
 

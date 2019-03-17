@@ -35,6 +35,15 @@ class DataLoad(object):
         self.training_set = torch.FloatTensor(self.training_set)
         self.test_set = torch.FloatTensor(self.test_set)
         
+        self.training_set[self.training_set==0] = -1
+        self.training_set[self.training_set==1] = 0
+        self.training_set[self.training_set==2] = 0
+        self.training_set[self.training_set>2] = 1
+        self.test_set[self.test_set==0] = -1
+        self.test_set[self.test_set==1] = 0
+        self.test_set[self.test_set==2] = 0
+        self.test_set[self.test_set>2] = 1
+        
     def convert(self,data):
         converted_data = []
         for id_users in range(1,self.number_of_users+1):
@@ -47,13 +56,14 @@ class DataLoad(object):
         
 
 class RestrictedBoltzmannMachine(DataLoad):
-    def __init__(self,train_data_file,test_data_file,delimiter,number_of_features,batch_size,no_epochs,debug=False):
+    def __init__(self,train_data_file,test_data_file,delimiter,number_of_features,batch_size,no_epochs,learning_rate=1.0,debug=False):
         DataLoad.__init__(self,train_data_file,test_data_file,delimiter,number_of_features,debug)
         self.weights = torch.randn(self.number_of_hidden_nodes,self.number_of_movies)
         self.hidden_bias = torch.randn(1,self.number_of_hidden_nodes)
         self.visible_bias = torch.randn(1,self.number_of_movies)
         self.no_epochs = no_epochs
         self.batch_size = batch_size
+        self.learning_rate = torch.tensor(learning_rate)
         
         if(debug):
             print("---------------Input Weights and bias begin----------------------\n")
@@ -61,6 +71,12 @@ class RestrictedBoltzmannMachine(DataLoad):
             print("---------------Input Weights and bias ends----------------------\n")
             
     def sample_hidden_for_given_visible(self,input_visible):
+        """
+            p(h = 1 | v) = σ(ΣW(ij)V(i))
+            
+            e σ(x) = 1/(1 + exp(−x))
+            
+        """
         wx = torch.mm(input_visible,self.weights.t())
         activation = wx + self.hidden_bias.expand_as(wx)
         prob_hidden_for_given_visible = torch.sigmoid(activation)
@@ -73,9 +89,14 @@ class RestrictedBoltzmannMachine(DataLoad):
         return prob_visible_for_given_hidden,torch.bernoulli(prob_visible_for_given_hidden)
     
     def train(self,visible_initial,visible_sampled,hidden_initial,hidden_sampled):
-        self.weights += torch.mm(hidden_initial.t(),visible_initial) - torch.mm(hidden_sampled.t(),visible_sampled)
-        self.hidden_bias += torch.sum((hidden_initial-hidden_sampled),0)
-        self.visible_bias += torch.sum((visible_initial-visible_sampled),0)
+        """"
+            ∆weights = learnin_rate * (EPdata [vh⊤] − EPmodel [vh⊤])
+            ∆hidden_bias = learnin_rate * (EPdata [hh⊤] − EPmodel [hh⊤])
+            ∆visible_bias = learnin_rate * (EPdata [vv⊤] − EPmodel [vv⊤])
+        """
+        self.weights += self.learning_rate * (torch.mm(hidden_initial.t(),visible_initial) - torch.mm(hidden_sampled.t(),visible_sampled))
+        self.hidden_bias += self.learning_rate * (torch.sum((hidden_initial-hidden_sampled),0))
+        self.visible_bias += self.learning_rate * (torch.sum((visible_initial-visible_sampled),0))
         
     def trainRBM(self):
         
@@ -106,14 +127,14 @@ class RestrictedBoltzmannMachine(DataLoad):
             if len(visible_testing[visible_testing >= 0]) > 0:
                 _,hidden_sampled = self.sample_hidden_for_given_visible(visible_testing)
                 _,visible_sampled = self.sample_visible_for_given_hidden(hidden_sampled)
-            test_loss += torch.mean(torch.abs(visible_testing[visible_testing >=0] - visible_training[visible_testing >=0]))
-            s+=1
+                test_loss += torch.mean(torch.abs(visible_testing[visible_testing >=0] - visible_training[visible_testing >=0]))
+                s+=1
         print('Test loss : {0} \n '.format(str(test_loss/s)))
         self.test_loss = test_loss/s
 
 def main():
     global rbm
-    rbm = RestrictedBoltzmannMachine('ml-100k/u1.base','ml-100k/u1.test','\t',200,100,10)
+    rbm = RestrictedBoltzmannMachine('ml-100k/u1.base','ml-100k/u1.test','\t',200,100,10,1)
     rbm.trainRBM()
     rbm.testRBM()
     
